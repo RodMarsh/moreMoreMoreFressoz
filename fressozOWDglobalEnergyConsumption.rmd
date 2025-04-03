@@ -1,0 +1,134 @@
+---
+title: "Energy Consumption: exploring Jean-Baptiste Fressoz's history of energy accumulation not transition"
+output: html_notebook
+---
+
+Data from Our World in Data: https://ourworldindata.org/energy-production-consumption
+
+Original chart: https://ourworldindata.org/grapher/global-energy-substitution
+
+## Necessary packages
+
+```{r}
+library(tidyverse)
+library(readr)
+library(stringr)
+library(jsonlite)
+library(patchwork)
+library(ggtext)
+
+```
+
+## Data wrangling
+
+```{r}
+# Fetch the data
+global_energy_substitution1 <- read.csv("https://ourworldindata.org/grapher/global-energy-substitution.csv?v=1&csvType=full&useColumnShortNames=true")
+
+# Fetch the metadata
+metadata <- fromJSON("https://ourworldindata.org/grapher/global-energy-substitution.metadata.json?v=1&csvType=full&useColumnShortNames=true")
+
+# Reshape the data to long format for easier plotting
+energy_long <- global_energy_substitution1 %>%
+  dplyr::select(-Entity, -Code) |>
+  pivot_longer(cols = -Year, names_to = "Source", values_to = "EnergyUse")
+
+# Filter out zero values before the Source first appears
+energy_long_filtered <- energy_long %>%
+  group_by(Source) %>%
+  filter(EnergyUse > 0 | Year == min(Year[EnergyUse > 0])) %>%
+  ungroup()
+
+```
+
+## Create growth index and calculate proportions
+
+Calculating growth index and proportion of total annual energy use for each source
+
+```{r}
+
+# Calculate the total energy use for each year
+energy_long_filtered <- energy_long_filtered %>%
+  group_by(Year) %>%
+  mutate(TotalEnergy = sum(EnergyUse, na.rm = TRUE)) %>%
+  ungroup()
+
+# Calculate the proportion of total energy for each Source
+energy_long_filtered <- energy_long_filtered %>%
+  mutate(Proportion = (EnergyUse / TotalEnergy) * 100)
+
+# Create an indexed growth value relative to the first non-zero year
+energy_long_indexed <- energy_long_filtered %>%
+  group_by(Source) %>%
+  mutate(InitialValue = first(EnergyUse),
+         GrowthIndex = EnergyUse / InitialValue ) %>%
+  ungroup()
+
+# Remove the text "(TWh, substituted energy)" from the Source column
+energy_long_indexed <- energy_long_indexed %>%
+  mutate(Source = str_remove(Source, " \\(TWh, substituted energy\\)"))
+
+# Combine GrowthIndex and Proportion into a single dataframe for plotting
+energy_long_combined <- energy_long_indexed %>%
+  pivot_longer(cols = c(GrowthIndex, Proportion), names_to = "Metric", values_to = "Value")
+
+
+
+```
+
+
+## Plotting
+
+Growth plot 
+
+```{r}
+growth_plot <- energy_long_indexed %>%
+  dplyr::select(Year, Source, GrowthIndex) %>%
+  ggplot(aes(x = Year, y = GrowthIndex)) +
+  geom_line(color = "blue") +
+  facet_wrap(~ Source, scales = "free_y", nrow=5) + 
+  labs(title = "Growth Index of Global Primary Energy Consumption by Source",
+       x = "Year",
+       y = "Growth Index (First Year = 1)") +
+  theme_minimal()
+
+```
+
+
+Proportion plot
+
+```{r}
+proportion_plot <- energy_long_indexed %>%
+  dplyr::select(Year, Source, Proportion) %>%
+  ggplot(aes(x = Year, y = Proportion)) +
+  geom_line(color = "red") +
+  facet_wrap(~ Source, nrow = 5) + 
+  labs(title = "Proportion of Total Global Primary Energy Consumption by Source",
+       x = "Year",
+       y = "Proportion of Total Energy (%)") +
+  theme_minimal()
+
+```
+
+
+## Joining the plots
+
+```{r}
+
+# Combine the two plots vertically
+combined_plot <- growth_plot + proportion_plot +
+  plot_annotation(
+    caption = "Data sources: Energy Institute, *Statistical Review of World Energy* (2024), Smil (2017) – with major processing by Our World in Data | Chart by Rod Marsh",
+    theme = theme(plot.caption = element_markdown(size=10, hjust=1))
+  )
+
+
+# Display the combined plot
+combined_plot 
+
+# Save the combined plot
+ggsave("combined_growth_proportion_plot.pdf", plot = combined_plot, device = "pdf", width = 14, height = 7)
+
+```
+
+
